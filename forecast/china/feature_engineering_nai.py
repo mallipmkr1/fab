@@ -100,6 +100,98 @@ def find_spike_with_demand(df, val_date, quantile=0.9):
     spikes[(df["expected_demand"] > q)] = 1
     df["dummy_spike"] = spikes
     return df
+from tqdm import tqdm
+import numpy as np
+import pandas as pd
+
+
+def mean_encode(data, gb_cols, not_nan_mask=None, quantile=0.95):
+    original_y = data["y"].copy()
+    if not_nan_mask is not None:
+        data.loc[~not_nan_mask, "y"] = np.nan
+    data.loc[data.y > np.quantile(data["y"], quantile), "y"] = np.nan
+
+    for col in gb_cols:
+        if not isinstance(col, str):
+            col_name = "meanenc_" + "_".join(col) + "_"
+        else:
+            col_name = "meanenc_" + "".join(col) + "_"
+        for s in ["mean", "std", "max"]:
+            data[col_name + s] = data.groupby(col)["y"].transform(s)
+
+    data["y"] = original_y
+    return data
+
+
+def make_future_df(df, forecast_dates, date_col="ts", non_static_cols=None, fill_with_nan=True):
+    """
+    Add future dates to existing dataframe
+    """
+    if non_static_cols is None:
+        non_static_cols = ["price", "list_price"]
+
+    future_df = [df.loc[df.ts < np.min(forecast_dates)].copy()]
+    for s in df["id"].unique():
+        b = df.loc[df["id"] == s].copy()
+        b.sort_values(by=date_col, inplace=True)
+        b = b.loc[b.ts < np.min(forecast_dates)]
+        b.reset_index(drop=True, inplace=True)
+
+        a = pd.DataFrame(columns=df.columns)
+        a[date_col] = forecast_dates
+        a["id"] = s
+        if "price" in b.columns:
+            if fill_with_nan:
+                a["price"] = np.nan
+            else:
+                a["price"] = b["price"].mean()
+
+        if "list_price" in b.columns:
+            if fill_with_nan:
+                a["list_price"] = np.nan
+            else:
+                a["list_price"] = b["list_price"].values[-1]
+
+        skip_columns = [date_col, "y"] + non_static_cols
+        for c in df.columns:
+            if c in skip_columns:
+                continue
+            a[c] = b[c].values[-1]
+        future_df.append(a)
+
+    future_df = pd.concat(future_df).reset_index(drop=True)
+    future_df["y"] = future_df["y"].astype(float)
+    future_df["year"] = future_df.ts.dt.year
+    future_df["month"] = future_df.ts.dt.month
+    future_df["woy"] = future_df.ts.dt.isocalendar().week
+    future_df["woy"] = future_df["woy"].astype(int)
+    return future_df
+
+
+def find_spike_with_demand(df, val_date, quantile=0.9):
+    q = np.quantile(df["y"].dropna(), quantile)
+    spikes = np.zeros((len(df),))
+    spikes[(df["y"] > q) & (df.ts < val_date)] = 1
+    spikes[(df["lag_demand"] > q)] = 1
+    df["dummy_spike"] = spikes
+    return df
+
+
+def find_spike_with_events(df, quantile=0.9):
+    q = np.quantile(df["y"].dropna(), quantile)
+    spikes = np.zeros((len(df),))
+    spikes[(df["y"] > q)] = 1
+    spikes[(df["events"] != "no_events")] = 1
+    df["dummy_spike"] = spikes
+    return df
+
+
+def find_spike(df, quantile=0.9):
+    q = np.quantile(df["y"].dropna(), quantile)
+    spikes = np.zeros((len(df),))
+    spikes[(df["y"] > q)] = 1
+    df["dummy_spike"] = spikes
+    return df
 
 
 def get_events():
@@ -107,80 +199,138 @@ def get_events():
     Hard coded events for now.
     Following Prophet's format
     """
-  
-
-    women_day_promotion = pd.DataFrame({
-        'holiday': 'women day',
-        'ds': pd.to_datetime(['2018-03-01','2019-03-01', '2020-03-01', '2021-03-01', '2022-03-01', '2023-03-01']),
-        'lower_window': -7,
-        'upper_window': 14,
-        'type': 'promotion_specific_date',
-    })
-    
-    lazada_bday_promotion = pd.DataFrame({
-        'holiday': 'lazada_bday_promotion',
-        'ds': pd.to_datetime(['2018-04-01','2019-04-01', '2020-04-01', '2021-04-01', '2022-04-01', '2023-04-01']),
-        'lower_window': -7,
-        'upper_window': 7,
-        'type': 'promotion',
-    })
-    
-    labour_day_promotion = pd.DataFrame({
-        'holiday': 'Labour day',
-        'ds': pd.to_datetime(['2018-05-01','2019-05-01', '2020-05-01', '2021-05-01', '2022-05-01', '2023-05-01']),
-        'lower_window': -7,
-        'upper_window': 0,
-        'type': 'promotion_specific_date',
-    })
-
-
-    day_99_promotion = pd.DataFrame({
-        'holiday': '9.9',
-        'ds': pd.to_datetime(['2019-09-01','2019-09-01', '2020-09-01', '2021-09-01', '2022-09-01', '2023-09-01']),
-        'lower_window': -7,
-        'upper_window': 7,
-        'type': 'promotion_specific_date',
-    })
-    
-    day_1010_promotion = pd.DataFrame({
-        'holiday': '10.10',
-        'ds': pd.to_datetime(['2018-10-01','2019-10-01', '2020-10-01', '2021-10-01', '2022-10-01', '2023-10-01']),
-        'lower_window': -7,
-        'upper_window': 7,
-        'type': 'promotion_specific_date',
-    })
-
-
-    day_1111_promotion = pd.DataFrame({
-        'holiday': '11.11',
-        'ds': pd.to_datetime(['2018-11-01','2019-11-01', '2020-11-01', '2021-11-01', '2022-11-01', '2023-11-01']),
-        'lower_window': -14,
-        'upper_window': 7,
-        'type': 'promotion_specific_date',
-    })
-
-    christmas_promotion = pd.DataFrame({
-        'holiday': 'christmas',
-        'ds': pd.to_datetime(['2018-12-01','2019-12-01', '2020-12-01', '2021-12-01', '2022-12-01', '2023-12-01']),
+    cny_promotion = pd.DataFrame({
+        'holiday': 'cny',
+        'ds': pd.to_datetime(['2019-02-01', '2020-01-01', '2021-02-01', '2022-02-01', '2023-01-01']),
         'lower_window': -7,
         'upper_window': 7,
         'type': 'festival',
+        'impact' : 'small_promo'
+    })
+
+    women_day_promotion = pd.DataFrame({
+        'holiday': 'women day',
+        'ds': pd.to_datetime(['2019-03-01', '2020-03-01', '2021-03-01', '2022-03-01', '2023-03-01']),
+        'lower_window': 0,
+        'upper_window': 0,
+        'type': 'promotion_specific_date',
+        'impact' : 'medium_promo'
+    })
+
+    mother_day_promotion = pd.DataFrame({
+        'holiday': 'mothers day',
+        'ds': pd.to_datetime(['2019-05-01', '2020-05-01', '2021-05-01', '2022-05-01', '2023-05-01']),
+        'lower_window': -7,
+        'upper_window': 0,
+        'type': 'promotion_specific_date',
+        'impact' : 'small_promo'
+    })
+
+
+    day_618_promotion = pd.DataFrame({
+        'holiday': '618',
+        'ds': pd.to_datetime(['2019-06-01', '2020-06-01', '2021-06-01', '2022-06-01', '2023-06-01']),
+        'lower_window': -14,
+        'upper_window': 14,
+        'type': 'promotion_specific_date',
+        'impact' : 'medium_promo'
+    })
+
+    day_99_promotion = pd.DataFrame({
+        'holiday': '9.9',
+        'ds': pd.to_datetime(['2019-09-01', '2020-09-01', '2021-09-01', '2022-09-01', '2023-09-01']),
+        'lower_window': -7,
+        'upper_window': 7,
+        'type': 'promotion_specific_date',
+        'impact' : 'medium_promo'
+    })
+
+    day_1111_promotion = pd.DataFrame({
+        'holiday': '11.11',
+        'ds': pd.to_datetime(['2019-11-01', '2020-11-01', '2021-11-01', '2022-11-01', '2023-11-01']),
+        'lower_window': -14,
+        'upper_window': 7,
+        'type': 'promotion_specific_date',
+        'impact' : 'main_promo'
+    })
+
+
+
+    christmas_promotion = pd.DataFrame({
+        'holiday': 'christmas',
+        'ds': pd.to_datetime(['2019-12-01', '2020-12-01', '2021-12-01', '2022-12-01', '2023-12-01']),
+        'lower_window': -7,
+        'upper_window': 7,
+        'type': 'festival',
+        'impact' : 'small_promo'
     })
 
     events = pd.concat((
+        cny_promotion,
         women_day_promotion,
-        lazada_bday_promotion,
-        labour_day_promotion,
+        mother_day_promotion,
+        day_618_promotion,
         day_99_promotion,
-        day_1010_promotion,
         day_1111_promotion,
         christmas_promotion,
     )).reset_index(drop=True)
 
     a = pd.get_dummies(events["type"])
+    b =  pd.get_dummies(events["impact"])
     events = pd.concat([events, a], axis=1)
+    events = pd.concat([events, b], axis=1)
     return events
 
+def get_events_full_data(event_init_df, events_df, events, event_types, event_types1):
+    _df = event_init_df
+    df_with_event = pd.merge(_df, events_df.rename(columns={"ds": "ts"}), on="ts", how="left")
+    df_with_event["holiday"].fillna("no_events", inplace=True)
+    df_with_event["type"].fillna("no_events", inplace=True)
+    print(event_types)
+    df_with_event[event_types] = df_with_event[event_types].fillna(0)
+    df_with_event[event_types1] = df_with_event[event_types1].fillna(0)
+    df_with_event.rename(columns={"holiday": "events"}, inplace=True)
+    events_df.sort_values(by=['ds','type'], inplace = True)
+    events.sort_values(by=['ds','type'], inplace = True)
+    tmp = []
+    for _id in df_with_event.id.unique():
+        ts = df_with_event.loc[df_with_event.id == _id].sort_values(by="ts").reset_index(drop=True)
+        ts["last_event"] = None
+        ts["next_event"] = None
+        ts["weeks_since_last_event"] = None
+        ts["weeks_to_next_event"] = None
+        ts["days_since_last_event"] = None
+        ts["days_to_next_event"] = None
+        for i in range(len(ts)):
+            if ts.events[i] == "no_events":
+                a = events_df.loc[events_df.ds < ts.ts[i]]
+                b = events_df.loc[events_df.ds > ts.ts[i]]
+
+                # to calculate days to events
+                aa = events.loc[(events.ds < ts.ts[i])]
+                bb = events.loc[(events.ds > ts.ts[i])]
+
+                ts.loc[i, "last_event"] = a.holiday.values[-1]
+                ts.loc[i, "next_event"] = b.holiday.values[0]
+                ts.loc[i, "weeks_since_last_event"] = (ts.ts[i] - a.ds.values[-1]).days / 7
+                ts.loc[i, "weeks_to_next_event"] = (b.ds.values[0] - ts.ts[i]).days / 7
+                ts.loc[i, "days_since_last_event"] = (ts.ts[i] - aa.ds.values[-1]).days
+                ts.loc[i, "days_to_next_event"] = (bb.ds.values[0] - ts.ts[i]).days
+            else:
+                ts.loc[i, "last_event"] = "event_this_week"
+                ts.loc[i, "next_event"] = "event_this_week"
+                ts.loc[i, "weeks_since_last_event"] = 0
+                ts.loc[i, "weeks_to_next_event"] = 0
+                ts.loc[i, "days_since_last_event"] = 0
+                ts.loc[i, "days_to_next_event"] = 0
+        tmp.append(ts)
+
+    df_with_event = pd.concat(tmp).reset_index(drop=True)
+    df_with_event["days_to_next_event"] = df_with_event["days_to_next_event"].astype(int)
+    df_with_event["days_since_last_event"] = df_with_event["days_since_last_event"].astype(int)
+    df_with_event["weeks_to_next_event"] = df_with_event["weeks_to_next_event"].astype(int)
+    df_with_event["weeks_since_last_event"] = df_with_event["weeks_since_last_event"].astype(int)
+    return df_with_event
 
 def get_features(df, all_dates, outlier_quantile=0.9, verbose=1,freq="W-Mon"):
     #### 1. get events
@@ -277,7 +427,8 @@ def get_features(df, all_dates, outlier_quantile=0.9, verbose=1,freq="W-Mon"):
     df_with_event["type"].fillna("no_events", inplace=True)
     df_with_event[event_types] = df_with_event[event_types].fillna(0)
     df_with_event.rename(columns={"holiday": "events"}, inplace=True)
-
+    events_df.sort_values(by=['ds','type'], inplace = True)
+    events.sort_values(by=['ds','type'], inplace = True)
     tmp = []
     for _id in tqdm(df_with_event.id.unique()):
         ts = df_with_event.loc[df_with_event.id == _id].sort_values(by="ts").reset_index(drop=True)

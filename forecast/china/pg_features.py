@@ -389,7 +389,7 @@ def extract_summary(
         b = "{}_{}_{}".format(var_name, s, group_str)
         cols.append(b)
     a.columns = cols
-
+    print(cols)
     sum_col = [x for x in cols if "sum" in x]
     a.sort_values(
         by=sum_col,
@@ -451,6 +451,7 @@ def get_features(
         gap=12,
         window=8,
         n_jobs=0,
+        use_tsfresh = False
 ):
     # 1. resample
     print("Resampling")
@@ -496,36 +497,38 @@ def get_features(
 
     # 4. create tsfresh features
     print("Create tsfresh")
-    df_tsfresh = extract_tsfresh_features(
-        df_future,
-        all_dates,
-        use_val=use_val,
-        nan_ratio=nan_ratio,
-        gap=gap,
-        window=window,
-        n_jobs=n_jobs,
-    )
-    del df_future
-    print(df_tsfresh.shape)
+    
+    
+    
 
     # 5. create summary features
-    df_summary = df_tsfresh.copy()
-    del df_tsfresh
+    if(use_tsfresh):
+        df_tsfresh = extract_tsfresh_features(
+            df_future,
+            all_dates,
+            use_val=use_val,
+            nan_ratio=nan_ratio,
+            gap=gap,
+            window=window,
+            n_jobs=n_jobs,
+        )
+        df_summary = df_tsfresh.copy()
+        del df_tsfresh
+        print(df_tsfresh.shape)
+    else:
+        df_summary = df_future.copy()
+    del df_future
+   
 
     if groups is None:
         groups = [
-            ["sku"],
-            ["customer"],
-            ["sku", "customer"],
-            ["quarter"],
-            ["month"],
-            ["woy"]
+            ['sku'],
+            ["sku", "month"]
         ]
-        if freq == "MS":
-            groups = groups[:-1]
+       
 
     print("Create summary features")
-    for g in tqdm(groups):
+    for g in groups:
         df_summary = extract_summary(
             df_summary,
             all_dates,
@@ -534,8 +537,10 @@ def get_features(
             summary_stats=summary_stats,
             use_val=use_val,
         )
+        print(df_summary.columns)
 
     df_feature = df_summary.copy()
+    print(df_feature.columns)
     del df_summary
     print(df_feature.shape)
 
